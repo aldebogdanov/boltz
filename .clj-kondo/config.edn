@@ -1,0 +1,4 @@
+{:linters {:clojure-lsp/unused-public-var {:level :off}
+           :unresolved-symbol {:level :off}
+           :refer-all {:level :off}}}
+
