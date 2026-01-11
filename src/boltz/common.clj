@@ -2,15 +2,6 @@
   (:require [overtone.live :refer :all]))
 
 
-#_{:clj-kondo/config {:lint-as {defnode clojure.core/def}}}
-(defmacro defnode
-  [name body]
-  `(def ~name (do #_(when (~'node-active? ~name)
-                    (~'kill ~name)
-                    (println (format "Node '%s' killed!" '~name)))
-                  ~body)))
-
-
 (defmacro monitor-bus
   [name bus]
   `(def ~(symbol name) (let [switch# (atom false)

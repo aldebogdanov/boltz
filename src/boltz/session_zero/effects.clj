@@ -1,6 +1,5 @@
 (ns boltz.session-zero.effects
   (:require [overtone.live :refer :all]
-            [boltz.common :refer [defnode]]
             [boltz.session-zero.general :refer [fx-group]]
             [hyperfiddle.rcf :refer [tests]]))
 
@@ -13,12 +12,15 @@
 
 (defonce kick-rev-bus (audio-bus 2))
 
-(defnode kick-rvb
+(def kick-rvb
   (rev-fx [:tail fx-group]
           :in-bus kick-rev-bus
           :mix 0.12
-          :room 0.7
+          :room 0.2
           :damp 0.1))
+
+(comment
+  (ctl kick-rvb :mix 0.2 :room 0.9 :damp 0.5))
 
 ;; -- Main Bass Declip Effect --
 (defsynth declip-fx [in-bus 0 thresh 0.8]

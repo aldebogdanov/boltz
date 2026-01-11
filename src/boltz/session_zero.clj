@@ -2,57 +2,176 @@
   (:require [overtone.live :refer :all]
             [hyperfiddle.rcf]
             [boltz.session-zero.general :refer [synth-group]]
-            [boltz.session-zero.instruments :refer [main-kick bass]]
+            [boltz.session-zero.instruments :refer [main-kick bass glitch glitch-cutoff-bus]]
             [boltz.session-zero.effects :refer [kick-rev-bus]]
-            [overtone.inst.drum :as d]))
+            [overtone.inst.drum :as d]
+            [overtone.at-at :as at]))
 
 (hyperfiddle.rcf/enable!)
+
 (stop)
 
-(def m (metronome 192))
+
+(defonce !bpm (atom 190))
+
+(def m (metronome @!bpm))
 
 
-(defn player [beat]
-  ;; Schedule the next call for 1 beat later
-  (apply-at (m (inc beat)) #'player [(inc beat)])
+(defonce !player-running? (atom false))
 
-  ;; 1. Play Kick on every beat (4/4)
-  (at (m beat) (main-kick [:tail synth-group] :out-bus kick-rev-bus :freq 55 :amp 0.85))
 
-  ;; 2. Triplet Bass
+(defonce !patterns (atom {}))
+
+
+(defn player
+  "Runs in parallel all pattern vars from `!patterns` atom"
+  [beat]
+  (->> @!patterns
+       vals
+       (pmap #(% beat))
+       dorun))
+
+
+(defn kick-4-4 [beat]
+  (at (m beat) (main-kick [:tail synth-group] :out-bus kick-rev-bus :freq 55 :amp 0.8)))
+
+(defn dub-kick [beat]
+  (at (m beat) (d/dub-kick)))
+
+
+(defn bass-triple [beat]
   (doseq [i (range 3)]
-    (let [b (+ beat (/ i 3))
-          x (rand)]
-      (at (m b) (bass [:tail synth-group] :freq 55 :out-bus 0 :cutoff (if (<= x 0.1) (+ 400 (* 200 x)) 500)))))
+    (let [b (+ beat (/ i 3))]
+      (at (m b) (bass [:tail synth-group] :freq 55 :out-bus 0 :cutoff 2200 :decay 0.06)))))
 
-  ;; 3. Hats
-  #_(doseq [i (range 4)]
+(defn hats-8 [beat]
+  (doseq [i (range 2)]
+    (let [b (+ beat (/ i 2))
+          a (if (zero? i) 0.3 0.15)]
+      (at (m b) (d/hat3 :amp a :t 0.02)))))
+
+
+
+(defn glitchy-thing [beat]
+  (doseq [i (range 4)]
     (let [b (+ beat (/ i 4))
-          a (if (zero? b) 0.6 0.4)]
-      (at (m b) (d/hat3 :amp a :t 0.02))))
+          p? (not= 3 i)
+          l? (= 2 i)]
+      (when p?
+        (at (m b) (glitch [:tail synth-group]
+                          :cutoff-bus glitch-cutoff-bus
+                          :out-bus kick-rev-bus
+                          :freq 100
+                          :decay (if l? 0.5 0.35)
+                          :amp 1.0))))))
 
-  ;; 4. Odd beats
-  #_(when (odd? beat)
-    (at (m beat) (d/open-hat)))
-)
+
+;; REPL-Safe Singleton Player
+(def player-pool (at/mk-pool))
+
+(defonce !scheduler-id (atom nil))  ; Track running scheduler
+
+(defn start-player []
+  (when @!scheduler-id
+    (at/stop @!scheduler-id)
+    (reset! !scheduler-id nil))
+  
+  (reset! !player-running? true)
+  (reset! !scheduler-id
+    (at/every (/ 60000 @!bpm)
+              #(let [current-beat (m)]
+                 (player current-beat))
+              player-pool
+              :desc "Session Zero player")))
+
+(defn stop-player []
+  (reset! !player-running? false)
+  (when @!scheduler-id
+    (at/stop @!scheduler-id)
+    (reset! !scheduler-id nil)))
 
 
-(player (#'m))
-(stop)
+;; Live-coding helper: restart player with current code
+(defn restart-player []
+  (stop-player)
+  (Thread/sleep 150)  ; Brief pause to ensure cleanup
+  (start-player)
+  (println "Player restarted at" @!bpm "BPM"))
+
+
+;; Change BPM and automatically restart if playing
+(defn set-bpm-and-restart [bpm]
+  (let [was-playing @!player-running?]
+    (when was-playing (stop-player))
+    (m :bpm (reset! !bpm bpm))
+    (when was-playing (start-player))
+    (println "BPM set to" @!bpm (when was-playing "(player restarted)"))))
+
+
+(defn pset! [& args]
+  (let [pairs (partition 2 args)]
+    (doseq [[k pattern-fn] pairs]
+      (let [v (resolve pattern-fn)]
+        (swap! !patterns assoc k v)
+        (println (format "Pattern set: %s -> %s" k (symbol v)))))))
+
+
+(defn pdrop! [& ks]
+  (doseq [k ks]
+    (swap! !patterns dissoc k)
+    (println "Pattern dropped:" k)))
+
 
 (comment
 
-  (d/open-hat)
+  (pset! :g 'glitchy-thing)
+  (pdrop! :g)
+
+  (pset! :k 'kick-4-4
+         :b 'bass-triple
+         :h 'hats-8)
+
+  (pdrop! :k :h :b :g)
+
+  (d/snare)
+  (main-kick [:tail synth-group] :out-bus kick-rev-bus :freq 55)
+
   
-  (stop)
+  ;; ===== CONTROL =====
+  (start-player)   ; Start with current code
+  (stop-player)    ; Stop completely
+  (restart-player) ; Stop and start with latest code
+  
+  ;; ===== TEMPO =====
+  (set-bpm-and-restart 128)  ; Change BPM, restart if playing
+  (set-bpm-and-restart 210)
+  @!bpm  ; Check current BPM
+  
+  ;; ===== INSTRUMENTS =====
+  (toggle-kick)
+  (toggle-bass)
+  (toggle-hats)
+  
+  ;; See current states:
+  {:kick @!kick? :bass @!bass? :hats @!hats?}
+  
+  ;; ===== DEBUG =====
   (server-info)
-  (boot-external-server)
-
-  (kill-server)
-
   (node-tree)
-
-  (defonce x 2)
-  x
   
+  ;; ===== EXPERIMENT =====
+  ;; Modify the player function above, then:
+  (restart-player)  ; Instantly hear changes
+  
+  ;; Try new patterns in isolation:
+  (do
+    (toggle-hats)
+    (at (m (inc (m))) #(d/hat3 :amp 0.4)))
+  
+  ;; ===== CLEANUP =====
+  (stop-player)
+  (group-free boltz.session-zero.general/fx-group)
+  (kill-server)
+  (boot-server)
+  (stop)
 )
